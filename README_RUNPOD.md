@@ -67,26 +67,75 @@ python export_mesh_example.py
 
 This will generate `model.glb`, `model.obj`, and potentially `model.fbx` (if supported) in the current directory.
 
-## 5. (Optional) Using Custom Docker Image
+## 5. Using Custom Docker Image (Recommended)
 
-If you prefer to use a custom Docker image instead of setting up the environment every time:
+Since the installation process involves compiling heavy CUDA dependencies (like PyTorch3D), building the image on RunPod's cloud build often times out (limit is 15 mins). **It is highly recommended to build the image locally and push it to Docker Hub.**
 
-1.  **Build the Image** (Locally or on a build server):
+### Prerequisites
+*   **Docker Desktop** installed on your computer.
+*   A **Docker Hub** account.
+
+### Build and Push Instructions
+
+1.  **Login to Docker Hub**:
     ```bash
-    docker build -t yourusername/sam3d-objects:v1 .
+    docker login
     ```
 
-2.  **Push to Docker Hub**:
+2.  **Build the Image**:
+    *Important: Since RunPod uses Linux x86_64 servers, you MUST specify the platform if you are building on a Mac (M1/M2/M3) or Windows.*
+    
+    Replace `yourusername` with your Docker Hub username.
+    ```bash
+    # This might take 20-40 minutes depending on your computer
+    docker build --platform linux/amd64 -t yourusername/sam3d-objects:v1 .
+    ```
+
+3.  **Push to Docker Hub**:
     ```bash
     docker push yourusername/sam3d-objects:v1
     ```
 
-3.  **Use on RunPod**:
-    *   When creating a new Pod, select "Custom Template".
-    *   Enter your image name: `yourusername/sam3d-objects:v1`.
-    *   Set Container Disk Size to at least 20GB.
-    *   Start the pod. The environment will be pre-installed.
-    *   You will still need to download the checkpoints (Step 3) as they are too large to bake into the image.
+4.  **Use on RunPod**:
+    *   Start a new Pod.
+    *   Select **"Custom Template"**.
+    *   **Container Image**: `yourusername/sam3d-objects:v1`
+    *   **Container Disk Size**: At least **20 GB** (The image is large).
+    *   **Volume Disk Size**: At least **20 GB** (For checkpoints and data).
+    *   Launch the pod.
+
+Once the pod is running, the environment is already set up. You just need to download the checkpoints (Step 3 above).
+
+## 6. Deploying as Serverless Endpoint
+
+To deploy this as a scalable Serverless Endpoint on RunPod:
+
+1.  **Prepare the Image**:
+    Follow the "Build and Push" instructions in Step 5. Ensure your image is on Docker Hub.
+
+2.  **Create Endpoint**:
+    *   Go to RunPod Console > Serverless > New Endpoint.
+    *   **Container Image**: `yourusername/sam3d-objects:v1`
+    *   **Container Disk**: 20GB+
+    *   **Environment Variables**:
+        *   `HF_TOKEN`: Your Hugging Face token (Required if checkpoints are not baked in).
+    
+3.  **Optimization (Cold Starts)**:
+    *   The first request will be slow because it downloads the model (if not baked in) and loads it into memory.
+    *   To speed this up, you can use **Network Volumes** to store the checkpoints persistently, so they don't need to be downloaded every time a new worker starts.
+    *   Or, you can bake the checkpoints into the Docker image during build (requires passing token as build arg, which is complex but fastest for startup).
+
+4.  **Usage**:
+    Send a POST request to your endpoint URL:
+    ```json
+    {
+      "input": {
+        "image_url": "https://your-image-url.com/image.png",
+        "format": "glb"
+      }
+    }
+    ```
+    The response will contain the base64 encoded mesh file.
 
 ## Troubleshooting
 

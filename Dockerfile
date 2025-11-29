@@ -54,10 +54,14 @@ ENV PIP_FIND_LINKS="https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1
 RUN pip install -e '.[dev]' && \
     pip install -e '.[p3d]' && \
     pip install -e '.[inference]' && \
-    pip install 'huggingface-hub[cli]<1.0'
+    pip install 'huggingface-hub[cli]<1.0' && \
+    pip install runpod requests
 
 # 6. Patch Hydra (Required fix mentioned in setup.md)
 RUN python ./patching/hydra
 
-# Set the default command to bash
-CMD ["/bin/bash"]
+# 7. Copy Handler
+COPY handler.py .
+
+# Set the default command to run the handler
+CMD ["python", "-u", "handler.py"]
