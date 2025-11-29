@@ -32,18 +32,20 @@ Once your pod is running and you have connected via SSH or the Web Terminal:
 
 You need to download the model weights from Hugging Face.
 
-1.  **Login to Hugging Face**:
+1.  **Set Hugging Face Token**:
     You need an access token from Hugging Face with access to the `facebook/sam-3d-objects` repository.
+    Set it as an environment variable (you can also add this to your RunPod environment variables):
     ```bash
-    conda activate sam3d-objects
-    huggingface-cli login
+    export HF_TOKEN="your_huggingface_token_here"
     ```
-    *Paste your token when prompted.*
 
 2.  **Download Weights**:
     ```bash
+    conda activate sam3d-objects
+    
     TAG=hf
     huggingface-cli download \
+      --token $HF_TOKEN \
       --repo-type model \
       --local-dir checkpoints/${TAG}-download \
       --max-workers 4 \

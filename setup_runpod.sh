@@ -74,4 +74,4 @@ pip install 'huggingface-hub[cli]<1.0'
 
 echo "Setup complete!"
 echo "To start using the environment, run: conda activate sam3d-objects"
-echo "Don't forget to download checkpoints using 'huggingface-cli login' and the download commands in README.md or README_RUNPOD.md"
+echo "Don't forget to set your HF_TOKEN and download checkpoints as described in README_RUNPOD.md"

@@ -3,7 +3,8 @@ FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 
 # Set environment variables to avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PATH="/root/miniconda3/bin:${PATH}"
+# Update PATH for Miniforge
+ENV PATH="/root/miniforge3/bin:${PATH}"
 
 # 1. Install System Dependencies
 # libgl1-mesa-glx, libglib2.0-0 etc. are required for OpenCV and rendering
@@ -19,26 +20,25 @@ RUN apt-get update && apt-get install -y \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Install Miniconda
+# 2. Install Miniforge (comes with Mamba and Conda-Forge configured)
+# Using Miniforge instead of Miniconda avoids the "conda install mamba" step which often fails
 RUN wget \
-    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
-    -O /tmp/miniconda.sh \
-    && bash /tmp/miniconda.sh -b -p /root/miniconda3 \
-    && rm /tmp/miniconda.sh
+    https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+    -O /tmp/miniforge.sh \
+    && bash /tmp/miniforge.sh -b -p /root/miniforge3 \
+    && rm /tmp/miniforge.sh
 
 # 3. Set up Conda Environment
 # Copy environment file
 COPY environments/default.yml /tmp/default.yml
 
-# Install mamba and create environment
-# We use mamba for faster resolution as recommended in the docs
-RUN conda install -n base -c conda-forge mamba -y && \
-    mamba env create -f /tmp/default.yml && \
-    conda clean -afy
+# Create environment using mamba
+RUN mamba env create -f /tmp/default.yml && \
+    mamba clean -afy
 
 # Activate environment by adding it to PATH
 # This ensures all subsequent commands run inside the conda environment
-ENV PATH /root/miniconda3/envs/sam3d-objects/bin:$PATH
+ENV PATH /root/miniforge3/envs/sam3d-objects/bin:$PATH
 ENV CONDA_DEFAULT_ENV sam3d-objects
 
 # 4. Copy Project Files
