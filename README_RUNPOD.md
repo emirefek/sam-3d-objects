@@ -85,21 +85,22 @@ Since the installation process involves compiling heavy CUDA dependencies (like 
 2.  **Build the Image**:
     *Important: Since RunPod uses Linux x86_64 servers, you MUST specify the platform if you are building on a Mac (M1/M2/M3) or Windows.*
     
-    Replace `yourusername` with your Docker Hub username.
     ```bash
-    # This might take 20-40 minutes depending on your computer
-    docker build --platform linux/amd64 -t yourusername/sam3d-objects:v1 .
+    # This might take 20-40 minutes for the first run, but subsequent builds are fast due to caching.
+    docker build --platform linux/amd64 -t emirefek/sam-3d-objects:v1 .
     ```
 
 3.  **Push to Docker Hub**:
     ```bash
-    docker push yourusername/sam3d-objects:v1
+    docker push emirefek/sam-3d-objects:v1
     ```
 
 4.  **Use on RunPod**:
+    *   **Important**: Since this is a **Private Image**, you must first add your Docker Hub credentials to RunPod (Settings -> Container Registry).
     *   Start a new Pod.
     *   Select **"Custom Template"**.
-    *   **Container Image**: `yourusername/sam3d-objects:v1`
+    *   **Container Image**: `emirefek/sam-3d-objects:v1`
+    *   **Container Registry Credentials**: Select the credentials you added.
     *   **Container Disk Size**: At least **20 GB** (The image is large).
     *   **Volume Disk Size**: At least **20 GB** (For checkpoints and data).
     *   Launch the pod.
@@ -115,7 +116,8 @@ To deploy this as a scalable Serverless Endpoint on RunPod:
 
 2.  **Create Endpoint**:
     *   Go to RunPod Console > Serverless > New Endpoint.
-    *   **Container Image**: `yourusername/sam3d-objects:v1`
+    *   **Container Image**: `emirefek/sam-3d-objects:v1`
+    *   **Container Registry Credentials**: Select your Docker Hub credentials.
     *   **Container Disk**: 20GB+
     *   **Environment Variables**:
         *   `HF_TOKEN`: Your Hugging Face token (Required if checkpoints are not baked in).
