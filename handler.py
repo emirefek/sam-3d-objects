@@ -13,16 +13,19 @@ import tempfile
 
 # Add notebook folder to path to import inference
 sys.path.append("notebook")
-from inference import Inference, load_image, load_single_mask
+from inference import Inference, load_image, load_mask
 
 # Global variable to hold the model
 inference_model = None
 
 
-def download_image(url):
-    response = requests.get(url)
+def download_file(url, suffix=".png"):
+    response = requests.get(url, stream=True)
     response.raise_for_status()
-    return Image.open(BytesIO(response.content)).convert("RGB")
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        for chunk in response.iter_content(chunk_size=8192):
+            tmp.write(chunk)
+        return tmp.name
 
 
 def init_model():
@@ -116,21 +119,27 @@ def handler(job):
     try:
         # Load Image
         print(f"Downloading image from {image_url}...")
-        image = download_image(image_url)
-        # Convert PIL to Numpy (Required by inference pipeline)
-        image = np.array(image)
+        image_path = download_file(image_url)
+        image = load_image(image_path)
 
         # Handle Mask
         mask = None
         if mask_url:
             print(f"Downloading mask from {mask_url}...")
-            mask_img = download_image(mask_url)
-            # Convert mask to numpy array as expected by inference
-            mask = np.array(mask_img)
-            # Ensure mask is single channel if needed, or handle as the load_single_mask does
-            if mask.ndim == 3:
-                mask = mask[:, :, 0]  # Take first channel if RGB
-            mask = mask > 128  # Binarize
+            mask_path = download_file(mask_url)
+            mask = load_mask(mask_path)
+            os.remove(mask_path)
+        else:
+            # Check for alpha channel in the loaded image
+            if image.ndim == 3 and image.shape[-1] == 4:
+                print("No mask_url provided, but image has Alpha channel. Using it as mask.")
+                mask = load_mask(image_path)
+            else:
+                print("No mask provided and no alpha channel. Using full image.")
+                mask = np.ones(image.shape[:2], dtype=bool)
+        
+        # Cleanup image file
+        os.remove(image_path)
 
         # Run Inference
         print("Running inference...")
