@@ -67,18 +67,9 @@ RUN pip install -r requirements.inference.txt
 RUN pip install -r requirements.dev.txt
 RUN pip install 'huggingface-hub[cli]<1.0' runpod requests
 
-# 5. Copy Project Files
-COPY . .
-
-# 6. Install Project
-# Install the package itself in editable mode
-RUN pip install -e .
-
-# 6. Patch Hydra (Required fix mentioned in setup.md)
-RUN python ./patching/hydra
-
-# 7. Download Checkpoints (Bake into image)
+# 5. Download Checkpoints (Bake into image)
 # Requires passing --build-arg HF_TOKEN=your_token during build
+# Placed here to leverage cache (so code changes don't trigger re-download)
 ARG HF_TOKEN
 RUN if [ -n "$HF_TOKEN" ]; then \
     echo "Baking checkpoints into image..." && \
@@ -95,7 +86,17 @@ RUN if [ -n "$HF_TOKEN" ]; then \
     echo "HF_TOKEN not provided. Checkpoints will be downloaded at runtime (slower startup)."; \
     fi
 
-# 8. Copy Handler
+# 6. Copy Project Files
+COPY . .
+
+# 7. Install Project
+# Install the package itself in editable mode
+RUN pip install -e .
+
+# 8. Patch Hydra (Required fix mentioned in setup.md)
+RUN python ./patching/hydra
+
+# 9. Copy Handler
 COPY handler.py .
 
 # Set the default command to run the handler
