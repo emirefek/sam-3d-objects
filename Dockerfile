@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # Stage 1: Builder (Compiles dependencies)
 FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS builder
 
@@ -15,6 +17,7 @@ RUN wget https://github.com/conda-forge/miniforge/releases/latest/download/Minif
     && rm /tmp/miniforge.sh
 
 # Create Conda Environment
+# (Only re-runs if default.yml changes)
 COPY environments/default.yml /tmp/default.yml
 RUN mamba env create -f /tmp/default.yml && mamba clean -afy
 
@@ -29,15 +32,38 @@ ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 
 WORKDIR /workspace/build
 
-# Install Python Dependencies
-COPY pyproject.toml requirements.txt requirements.dev.txt requirements.inference.txt requirements.p3d.txt ./
-RUN pip install -r requirements.txt
-RUN pip install -r requirements.p3d.txt
-RUN pip install -r requirements.inference.txt
-RUN pip install -r requirements.dev.txt
-RUN pip install 'huggingface-hub[cli]<1.0' runpod requests
+# --- OPTIMIZED PIP INSTALL SECTION ---
+# Key Fix: Files are copied and installed individually.
+# We use --mount=type=cache to save downloaded wheels between builds.
 
-# Apply Hydra Patch (Modifies site-packages in the env)
+# 1. Base Requirements (Most stable)
+COPY requirements.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# 2. Heavy 3D Libs (Slowest to compile, rarely change)
+COPY requirements.p3d.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.p3d.txt
+
+# 3. Inference Requirements (Medium stability)
+COPY requirements.inference.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.inference.txt
+
+# 4. Dev Requirements (Highly volatile)
+# If you change this file, only THIS step re-runs.
+COPY requirements.dev.txt ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.dev.txt
+
+# 5. Project Metadata & Tools
+COPY pyproject.toml ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install 'huggingface-hub[cli]<1.0' runpod requests
+
+# Apply Hydra Patch (Modifies site-packages)
+# This must happen after packages are installed
 COPY patching ./patching
 RUN python ./patching/hydra
 
@@ -46,8 +72,7 @@ FROM python:3.11-slim AS downloader
 ARG HF_TOKEN
 RUN pip install 'huggingface-hub[cli]<1.0'
 
-# Download to a temporary directory
-# We download the 'checkpoints' folder from the repo
+# Download checkpoints
 RUN if [ -n "$HF_TOKEN" ]; then \
     echo "Downloading checkpoints..." && \
     huggingface-cli download \
@@ -68,7 +93,6 @@ ENV PATH="/root/miniforge3/envs/sam3d-objects/bin:$PATH"
 ENV CONDA_DEFAULT_ENV=sam3d-objects
 
 # Install Runtime System Dependencies
-# We need these for OpenCV, PyTorch3D rendering, etc.
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -84,14 +108,13 @@ COPY --from=builder /root/miniforge3 /root/miniforge3
 # Copy Checkpoints from Downloader
 WORKDIR /workspace/sam-3d-objects
 RUN mkdir -p checkpoints/hf
-# Copy the contents of the downloaded 'checkpoints' folder into 'checkpoints/hf'
 COPY --from=downloader /tmp/sam3d_download/checkpoints/ ./checkpoints/hf/
 
-# Copy Source Code
+# Copy Source Code (Most frequent changes happen here)
 COPY . .
 
 # Install Project (Editable mode)
-# This is fast and necessary for the code to be importable
-RUN pip install -e .
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -e .
 
 CMD ["python", "-u", "handler.py"]
