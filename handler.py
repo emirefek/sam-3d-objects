@@ -28,6 +28,47 @@ def download_file(url, suffix=".png"):
         return tmp.name
 
 
+def upload_to_psitransfer(file_path, base_url):
+    """
+    Uploads a file to a PsiTransfer instance.
+    """
+    filename = os.path.basename(file_path)
+    filesize = os.path.getsize(file_path)
+    
+    # Ensure URL format
+    base_url = base_url.rstrip("/")
+    files_endpoint = f"{base_url}/files"
+    
+    # 1. Create Upload Session
+    metadata = {
+        "name": filename,
+        "size": filesize,
+        "type": "model/gltf-binary" 
+    }
+    
+    print(f"Creating PsiTransfer session at {files_endpoint}...")
+    resp = requests.post(files_endpoint, json=metadata)
+    resp.raise_for_status()
+    session_data = resp.json()
+    sid = session_data.get("sid")
+    
+    if not sid:
+        raise ValueError("Failed to get session ID (sid) from PsiTransfer")
+
+    # 2. Upload File Content
+    upload_endpoint = f"{files_endpoint}/{sid}"
+    print(f"Uploading content to {upload_endpoint}...")
+    
+    with open(file_path, "rb") as f:
+        # PsiTransfer uses PUT for the file content
+        up_resp = requests.put(upload_endpoint, data=f)
+        up_resp.raise_for_status()
+        
+    # 3. Construct Download URL
+    download_url = f"{base_url}/{sid}"
+    return download_url
+
+
 def init_model():
     global inference_model
     if inference_model is None:
@@ -184,15 +225,49 @@ def handler(job):
                 print(f"General export failed: {e}")
                 raise e
 
-            # Read back and encode to base64
-            print("Reading file and encoding to base64...")
-            with open(mesh_path, "rb") as f:
-                mesh_data = f.read()
+            # Upload or Encode
+            upload_url = os.environ.get("UPLOAD_API_URL")
+            upload_type = os.environ.get("UPLOAD_TYPE", "generic") # generic, psitransfer
+            
+            if upload_url:
+                print(f"Uploading mesh to {upload_url} (Type: {upload_type})...")
+                try:
+                    if upload_type == "psitransfer":
+                        download_link = upload_to_psitransfer(mesh_path, upload_url)
+                        print(f"PsiTransfer upload successful. Link: {download_link}")
+                        results["mesh_url"] = download_link
+                    else:
+                        # Generic POST upload (multipart/form-data)
+                        with open(mesh_path, "rb") as f:
+                            response = requests.post(upload_url, files={"file": f})
+                            response.raise_for_status()
+                            
+                            # Try to parse JSON if the server returns it, otherwise use text
+                            try:
+                                resp_json = response.json()
+                                download_link = resp_json.get("url") or resp_json.get("link") or resp_json.get("file_url") or response.text.strip()
+                            except ValueError:
+                                download_link = response.text.strip()
+                                
+                            print(f"Upload successful. Link: {download_link}")
+                            results["mesh_url"] = download_link
+                except Exception as e:
+                    print(f"Upload failed: {e}. Falling back to base64...")
+                    # Fallback to base64 if upload fails
+                    with open(mesh_path, "rb") as f:
+                        mesh_data = f.read()
+                    mesh_base64 = base64.b64encode(mesh_data).decode("utf-8")
+                    results["mesh_base64"] = mesh_base64
+            else:
+                print("Reading file and encoding to base64...")
+                with open(mesh_path, "rb") as f:
+                    mesh_data = f.read()
 
-            mesh_base64 = base64.b64encode(mesh_data).decode("utf-8")
-            results["mesh_base64"] = mesh_base64
+                mesh_base64 = base64.b64encode(mesh_data).decode("utf-8")
+                results["mesh_base64"] = mesh_base64
+                print(f"Encoding complete. Base64 length: {len(mesh_base64)}")
+
             results["format"] = output_format
-            print(f"Encoding complete. Base64 length: {len(mesh_base64)}")
 
             # Cleanup
             os.remove(mesh_path)
