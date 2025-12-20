@@ -7,6 +7,9 @@ import torch
 import numpy as np
 import trimesh
 import runpod
+import boto3
+import uuid
+from botocore.exceptions import NoCredentialsError
 from io import BytesIO
 from PIL import Image
 import tempfile
@@ -17,6 +20,41 @@ from inference import Inference, load_image, load_mask
 
 # Global variable to hold the model
 inference_model = None
+s3_client = None
+
+def get_s3_client():
+    global s3_client
+    if s3_client is None:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=os.environ.get("S3_ENDPOINT_URL"),
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY")
+        )
+    return s3_client
+
+def upload_to_r2(file_path, object_name=None):
+    """Upload a file to an S3 bucket and return a presigned URL."""
+    bucket_name = os.environ.get("S3_BUCKET_NAME")
+    
+    if object_name is None:
+        object_name = f"{uuid.uuid4()}_{os.path.basename(file_path)}"
+
+    s3 = get_s3_client()
+    try:
+        s3.upload_file(file_path, bucket_name, object_name)
+        
+        # Generate a presigned URL that lasts for 1 hour
+        url = s3.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={'Bucket': bucket_name, 'Key': object_name},
+            ExpiresIn=3600
+        )
+        return url
+    except Exception as e:
+        print(f"Failed to upload to R2: {e}")
+        raise e
+
 
 
 def download_file(url, suffix=".png"):
@@ -26,47 +64,6 @@ def download_file(url, suffix=".png"):
         for chunk in response.iter_content(chunk_size=8192):
             tmp.write(chunk)
         return tmp.name
-
-
-def upload_to_psitransfer(file_path, base_url):
-    """
-    Uploads a file to a PsiTransfer instance.
-    """
-    filename = os.path.basename(file_path)
-    filesize = os.path.getsize(file_path)
-    
-    # Ensure URL format
-    base_url = base_url.rstrip("/")
-    files_endpoint = f"{base_url}/files"
-    
-    # 1. Create Upload Session
-    metadata = {
-        "name": filename,
-        "size": filesize,
-        "type": "model/gltf-binary" 
-    }
-    
-    print(f"Creating PsiTransfer session at {files_endpoint}...")
-    resp = requests.post(files_endpoint, json=metadata)
-    resp.raise_for_status()
-    session_data = resp.json()
-    sid = session_data.get("sid")
-    
-    if not sid:
-        raise ValueError("Failed to get session ID (sid) from PsiTransfer")
-
-    # 2. Upload File Content
-    upload_endpoint = f"{files_endpoint}/{sid}"
-    print(f"Uploading content to {upload_endpoint}...")
-    
-    with open(file_path, "rb") as f:
-        # PsiTransfer uses PUT for the file content
-        up_resp = requests.put(upload_endpoint, data=f)
-        up_resp.raise_for_status()
-        
-    # 3. Construct Download URL
-    download_url = f"{base_url}/{sid}"
-    return download_url
 
 
 def init_model():
@@ -225,48 +222,27 @@ def handler(job):
                 print(f"General export failed: {e}")
                 raise e
 
-            # Upload or Encode
-            upload_url = os.environ.get("UPLOAD_API_URL")
-            upload_type = os.environ.get("UPLOAD_TYPE", "generic") # generic, psitransfer
-            
-            if upload_url:
-                print(f"Uploading mesh to {upload_url} (Type: {upload_type})...")
+            # Upload to R2 if configured, otherwise fallback to base64
+            if os.environ.get("S3_BUCKET_NAME") and os.environ.get("AWS_ACCESS_KEY_ID"):
+                print("Uploading to R2...")
                 try:
-                    if upload_type == "psitransfer":
-                        download_link = upload_to_psitransfer(mesh_path, upload_url)
-                        print(f"PsiTransfer upload successful. Link: {download_link}")
-                        results["mesh_url"] = download_link
-                    else:
-                        # Generic POST upload (multipart/form-data)
-                        with open(mesh_path, "rb") as f:
-                            response = requests.post(upload_url, files={"file": f})
-                            response.raise_for_status()
-                            
-                            # Try to parse JSON if the server returns it, otherwise use text
-                            try:
-                                resp_json = response.json()
-                                download_link = resp_json.get("url") or resp_json.get("link") or resp_json.get("file_url") or response.text.strip()
-                            except ValueError:
-                                download_link = response.text.strip()
-                                
-                            print(f"Upload successful. Link: {download_link}")
-                            results["mesh_url"] = download_link
+                    mesh_url = upload_to_r2(mesh_path)
+                    results["mesh_url"] = mesh_url
+                    print(f"Upload complete. URL: {mesh_url}")
                 except Exception as e:
-                    print(f"Upload failed: {e}. Falling back to base64...")
+                    print(f"Upload failed: {e}. Falling back to base64.")
                     # Fallback to base64 if upload fails
                     with open(mesh_path, "rb") as f:
                         mesh_data = f.read()
                     mesh_base64 = base64.b64encode(mesh_data).decode("utf-8")
                     results["mesh_base64"] = mesh_base64
             else:
-                print("Reading file and encoding to base64...")
+                print("R2 not configured. Encoding to base64...")
                 with open(mesh_path, "rb") as f:
                     mesh_data = f.read()
-
                 mesh_base64 = base64.b64encode(mesh_data).decode("utf-8")
                 results["mesh_base64"] = mesh_base64
-                print(f"Encoding complete. Base64 length: {len(mesh_base64)}")
-
+            
             results["format"] = output_format
 
             # Cleanup

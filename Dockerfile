@@ -91,6 +91,8 @@ FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/root/miniforge3/envs/sam3d-objects/bin:$PATH"
 ENV CONDA_DEFAULT_ENV=sam3d-objects
+# Ensure CUDA libraries are in the path
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
 
 # Install Runtime System Dependencies
 RUN apt-get update && apt-get install -y \
